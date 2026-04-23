@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useCallback } from 'react'
+import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react'
 import { ethers } from 'ethers'
 
 const Web3Context = createContext(null)
@@ -16,6 +16,15 @@ export function Web3Provider({ children }) {
   const [chainId, setChainId] = useState(null)
   const [connecting, setConnecting] = useState(false)
   const [error, setError] = useState(null)
+
+  // Direct JSON-RPC provider for READ operations.
+  // Uses the Vite proxy (/rpc → localhost:8545) so it works in both
+  // local development AND GitHub Codespaces (where the browser can't
+  // reach localhost:8545 directly, but the Vite server can).
+  const readProvider = useMemo(() => {
+    const rpcUrl = window.location.origin + '/rpc'
+    return new ethers.JsonRpcProvider(rpcUrl)
+  }, [])
 
   // Automatically detect if already connected
   useEffect(() => {
@@ -100,6 +109,7 @@ export function Web3Provider({ children }) {
   const value = {
     account,
     provider,
+    readProvider,  // Direct RPC provider for reads (works in Codespaces)
     signer,
     chainId,
     connecting,

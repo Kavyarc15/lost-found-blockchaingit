@@ -23,7 +23,7 @@ const ABI = [
 ]
 
 export function useContract() {
-  const { signer, provider } = useWeb3()
+  const { signer, readProvider } = useWeb3()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [contractAddress, setContractAddress] = useState(null)
@@ -40,15 +40,18 @@ export function useContract() {
       })
   }, [])
 
+  // Write contract: uses wallet signer (for transactions)
   const contract = useMemo(() => {
     if (!signer || !contractAddress) return null
     return new ethers.Contract(contractAddress, ABI, signer)
   }, [signer, contractAddress])
 
+  // Read contract: uses direct JSON-RPC provider via Vite proxy
+  // This bypasses the wallet entirely for reads, which fixes Codespaces
   const readContract = useMemo(() => {
-    if (!provider || !contractAddress) return null
-    return new ethers.Contract(contractAddress, ABI, provider)
-  }, [provider, contractAddress])
+    if (!readProvider || !contractAddress) return null
+    return new ethers.Contract(contractAddress, ABI, readProvider)
+  }, [readProvider, contractAddress])
 
   // ── Read Functions ──────────────────────────────────
 

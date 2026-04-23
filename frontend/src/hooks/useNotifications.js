@@ -9,7 +9,7 @@ import { getStatusName, timeAgo } from '../utils/formatters'
  * Returns { notifications, unreadCount, markAllRead, clearNotifications }
  */
 export function useNotifications() {
-  const { account, provider } = useWeb3()
+  const { account, readProvider } = useWeb3()
   const { readContract } = useContract()
   const [notifications, setNotifications] = useState([])
   const [unreadCount, setUnreadCount] = useState(0)
@@ -17,10 +17,10 @@ export function useNotifications() {
   const intervalRef = useRef(null)
 
   const fetchEvents = useCallback(async () => {
-    if (!readContract || !provider) return
+    if (!readContract || !readProvider) return
 
     try {
-      const currentBlock = await provider.getBlockNumber()
+      const currentBlock = await readProvider.getBlockNumber()
       // On first run or if somehow behind, start from max(0, current - 1000)
       const fromBlock = lastBlockRef.current > 0
         ? lastBlockRef.current + 1
@@ -111,7 +111,7 @@ export function useNotifications() {
     } catch (err) {
       console.error('Error fetching notifications:', err)
     }
-  }, [readContract, provider])
+  }, [readContract, readProvider])
 
   // Poll on interval
   useEffect(() => {
