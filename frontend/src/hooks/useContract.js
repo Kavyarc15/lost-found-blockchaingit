@@ -98,6 +98,13 @@ export function useContract() {
       console.log('[useContract] getTotalItems =', Number(testResult))
     } catch (testErr) {
       console.error('[useContract] RPC test failed:', testErr.message)
+      // BAD_DATA with 0x means the contract address has no code deployed
+      if (testErr.code === 'BAD_DATA' || testErr.message?.includes('0x')) {
+        throw new Error(
+          'Contract not deployed on this network. ' +
+          'Run: npx hardhat run scripts/deploy.js --network localhost'
+        )
+      }
       throw new Error('Cannot reach the blockchain. Is the Hardhat node running?')
     }
 
