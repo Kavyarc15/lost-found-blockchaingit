@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { ethers } from 'ethers'
 import { useWeb3 } from '../context/Web3Context'
+import { HARDHAT_CHAIN_ID } from '../utils/constants'
 
 // The ABI matching the Solidity contract
 const ABI = [
@@ -22,23 +23,128 @@ const ABI = [
   "event DisputeResolved(uint256 indexed itemId, uint8 newStatus, address indexed admin, uint256 timestamp)",
 ]
 
+/**
+ * Fetches the contract address by trying multiple sources:
+ * 1. The deployed JSON file (works if deploy script ran in this env)
+ * 2. Well-known Hardhat deploy addresses (deterministic based on nonce)
+ */
+async function discoverContractAddress(readProvider) {
+  // Source 1: Try loading from the JSON file
+  try {
+    const mod = await import('../contracts/LostAndFound.json')
+    const data = mod.default || mod
+    if (data.address) {
+      // Verify the contract actually exists at this address
+      const code = await readProvider.getCode(data.address)
+      if (code !== '0x') {
+        console.log('[Contract] Found via JSON:', data.address)
+        return data.address
+      }
+      console.warn('[Contract] JSON address has no code, scanning...')
+    }
+  } catch {
+    console.warn('[Contract] No JSON file found, scanning...')
+  }
+
+  // Source 2: Scan recent Hardhat deployments
+  // Hardhat account #0 deploys contracts at deterministic addresses based on nonce.
+  // We check the first 10 possible deployment addresses.
+  const deployerAddress = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266' // Hardhat account #0
+  for (let nonce = 0; nonce < 10; nonce++) {
+    const addr = ethers.getCreateAddress({ from: deployerAddress, nonce })
+    try {
+      const code = await readProvider.getCode(addr)
+      if (code !== '0x') {
+        // Found a contract! Verify it's ours by calling getTotalItems
+        const testContract = new ethers.Contract(addr, ["function getTotalItems() view returns (uint256)"], readProvider)
+        await testContract.getTotalItems()
+        console.log('[Contract] Found via scan at nonce', nonce, ':', addr)
+        return addr
+      }
+    } catch {
+      // Not our contract or no contract, try next nonce
+    }
+  }
+
+  return null
+}
+
+/**
+ * Helper: detects nonce-related errors from Hardhat (-32000 "nonce too high")
+ * and resets the Hardhat node nonce to match the expected value,
+ * then retries the transaction once.
+ */
+async function sendWithNonceRetry(contractMethod, args, signerInstance, readProvider) {
+  try {
+    const tx = await contractMethod(...args)
+    return tx
+  } catch (err) {
+    const msg = (err.message || '') + (err.info?.error?.message || '') + (err.error?.message || '')
+    const isNonceError = msg.includes('nonce too high') || msg.includes('nonce too low') ||
+      (err.code === -32000 && msg.toLowerCase().includes('nonce'))
+
+    if (!isNonceError) throw err
+
+    console.warn('[Contract] Nonce mismatch detected, attempting auto-fix...')
+    try {
+      const signerAddr = await signerInstance.getAddress()
+      // Reset the Hardhat node's nonce for this account to 0, then let the
+      // node auto-increment. We use hardhat_dropTransaction isn't available,
+      // so we use hardhat_setNonce to the node's latest count.
+      const rpcUrl = window.location.origin + '/rpc'
+      const rpcNetwork = new ethers.Network('hardhat', HARDHAT_CHAIN_ID)
+      const directProvider = new ethers.JsonRpcProvider(rpcUrl, rpcNetwork, { staticNetwork: rpcNetwork })
+      
+      // Get the actual on-chain nonce
+      const onChainNonce = await directProvider.send('eth_getTransactionCount', [signerAddr, 'latest'])
+      console.log('[Contract] On-chain nonce:', onChainNonce, '— resetting MetaMask nonce cache')
+
+      // Tell MetaMask to re-derive the nonce by dropping and re-adding the network
+      // But simpler: just set Hardhat node nonce to what MetaMask expects
+      // Since we can't control MetaMask, we set the node nonce to a high value
+      // and let it work from there
+      const expectedNonce = await signerInstance.getNonce('pending')
+      const nonceHex = '0x' + expectedNonce.toString(16)
+      await directProvider.send('hardhat_setNonce', [signerAddr, nonceHex])
+      console.log('[Contract] Node nonce reset to', expectedNonce, '— retrying transaction...')
+
+      // Retry the transaction
+      const tx = await contractMethod(...args)
+      return tx
+    } catch (retryErr) {
+      console.error('[Contract] Retry after nonce reset also failed:', retryErr)
+      throw err // Throw the original error
+    }
+  }
+}
+
 export function useContract() {
-  const { signer, readProvider } = useWeb3()
+  const { signer, provider, readProvider } = useWeb3()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [contractAddress, setContractAddress] = useState(null)
+  const [notDeployed, setNotDeployed] = useState(false)
 
-  // Dynamically load the deployed contract address
+  // Auto-discover the contract address
   useEffect(() => {
-    import('../contracts/LostAndFound.json')
-      .then((mod) => {
-        const data = mod.default || mod
-        setContractAddress(data.address)
+    if (!readProvider) return
+
+    discoverContractAddress(readProvider)
+      .then((addr) => {
+        if (addr) {
+          setContractAddress(addr)
+          setNotDeployed(false)
+          console.log('[Contract] Using address:', addr)
+        } else {
+          setNotDeployed(true)
+          console.error('[Contract] No deployed contract found!')
+        }
       })
-      .catch(() => {
-        console.warn('Contract ABI not found. Deploy the contract first.')
+      .catch((err) => {
+        console.error('[Contract] Discovery failed:', err)
+        setNotDeployed(true)
       })
-  }, [])
+  }, [readProvider])
 
   // Write contract: uses wallet signer (for transactions)
   const contract = useMemo(() => {
@@ -47,7 +153,6 @@ export function useContract() {
   }, [signer, contractAddress])
 
   // Read contract: uses direct JSON-RPC provider via Vite proxy
-  // This bypasses the wallet entirely for reads, which fixes Codespaces
   const readContract = useMemo(() => {
     if (!readProvider || !contractAddress) return null
     return new ethers.Contract(contractAddress, ABI, readProvider)
@@ -88,28 +193,18 @@ export function useContract() {
 
   const getAllItems = useCallback(async () => {
     if (!readContract) {
-      console.warn('[useContract] readContract not ready yet')
+      if (notDeployed) {
+        throw new Error(
+          'Contract not deployed. Run in terminal:\n' +
+          'npx hardhat run scripts/deploy.js --network localhost\n' +
+          'Then refresh this page.'
+        )
+      }
       return []
     }
 
-    // Test the RPC connection first
-    try {
-      const testResult = await readContract.getTotalItems()
-      console.log('[useContract] getTotalItems =', Number(testResult))
-    } catch (testErr) {
-      console.error('[useContract] RPC test failed:', testErr.message)
-      // BAD_DATA with 0x means the contract address has no code deployed
-      if (testErr.code === 'BAD_DATA' || testErr.message?.includes('0x')) {
-        throw new Error(
-          'Contract not deployed on this network. ' +
-          'Run: npx hardhat run scripts/deploy.js --network localhost'
-        )
-      }
-      throw new Error('Cannot reach the blockchain. Is the Hardhat node running?')
-    }
-
     const ids = await readContract.getAllItemIds()
-    console.log('[useContract] getAllItemIds =', ids.length, 'items')
+    console.log('[Contract] getAllItemIds =', ids.length, 'items')
     const items = await Promise.all(
       ids.map(async (id) => {
         const item = await readContract.getItem(id)
@@ -130,7 +225,7 @@ export function useContract() {
       })
     )
     return items.reverse() // newest first
-  }, [readContract])
+  }, [readContract, notDeployed])
 
   const getItemsByFinder = useCallback(async (address) => {
     if (!readContract) return []
@@ -152,24 +247,25 @@ export function useContract() {
   // ── Write Functions ─────────────────────────────────
 
   const reportItem = useCallback(async (name, description, location, imageHash) => {
-    if (!contract) throw new Error('Contract not loaded')
+    if (!contract) throw new Error('Contract not loaded. Make sure you are on the Hardhat Local network.')
     setLoading(true)
     setError(null)
     try {
-      const tx = await contract.reportItem(name, description, location, imageHash)
+      const tx = await sendWithNonceRetry(
+        contract.reportItem.bind(contract),
+        [name, description, location, imageHash],
+        signer,
+        readProvider
+      )
       const receipt = await tx.wait()
 
-      // Transaction succeeded! Now try to extract the new item ID.
-      // This is best-effort — if parsing fails, we still return success.
+      // Try to parse the ItemReported event to get the new item ID.
       try {
-        // Method 1: Check if receipt already has parsed logs (ethers v6 EventLog)
         for (const log of (receipt.logs || [])) {
           if (log.fragment?.name === 'ItemReported' || log.eventName === 'ItemReported') {
             return Number(log.args?.itemId || log.args?.[0])
           }
         }
-
-        // Method 2: Manually parse logs that have topics
         for (const log of (receipt.logs || [])) {
           if (log.topics && log.topics.length > 0) {
             try {
@@ -180,19 +276,13 @@ export function useContract() {
               if (parsed?.name === 'ItemReported') {
                 return Number(parsed.args.itemId)
               }
-            } catch {
-              // Not our event, skip
-            }
+            } catch { /* skip */ }
           }
         }
-
-        // Method 3: Fallback — get the latest item ID from the contract
-        const totalItems = await contract.getTotalItems()
+        const totalItems = await readContract.getTotalItems()
         return Number(totalItems)
       } catch {
-        // Event parsing failed but transaction was successful
-        // Return null to indicate success without a specific ID
-        return null
+        return null // Transaction succeeded, just can't get the ID
       }
     } catch (err) {
       setError(err.reason || err.message)
@@ -200,14 +290,19 @@ export function useContract() {
     } finally {
       setLoading(false)
     }
-  }, [contract])
+  }, [contract, readContract, signer, readProvider])
 
   const fileClaim = useCallback(async (itemId) => {
     if (!contract) throw new Error('Contract not loaded')
     setLoading(true)
     setError(null)
     try {
-      const tx = await contract.fileClaim(itemId)
+      const tx = await sendWithNonceRetry(
+        contract.fileClaim.bind(contract),
+        [itemId],
+        signer,
+        readProvider
+      )
       await tx.wait()
     } catch (err) {
       setError(err.reason || err.message)
@@ -215,14 +310,19 @@ export function useContract() {
     } finally {
       setLoading(false)
     }
-  }, [contract])
+  }, [contract, signer, readProvider])
 
   const confirmReturn = useCallback(async (itemId, confirmImageHash) => {
     if (!contract) throw new Error('Contract not loaded')
     setLoading(true)
     setError(null)
     try {
-      const tx = await contract.confirmReturn(itemId, confirmImageHash)
+      const tx = await sendWithNonceRetry(
+        contract.confirmReturn.bind(contract),
+        [itemId, confirmImageHash],
+        signer,
+        readProvider
+      )
       await tx.wait()
     } catch (err) {
       setError(err.reason || err.message)
@@ -230,14 +330,19 @@ export function useContract() {
     } finally {
       setLoading(false)
     }
-  }, [contract])
+  }, [contract, signer, readProvider])
 
   const disputeItem = useCallback(async (itemId) => {
     if (!contract) throw new Error('Contract not loaded')
     setLoading(true)
     setError(null)
     try {
-      const tx = await contract.disputeItem(itemId)
+      const tx = await sendWithNonceRetry(
+        contract.disputeItem.bind(contract),
+        [itemId],
+        signer,
+        readProvider
+      )
       await tx.wait()
     } catch (err) {
       setError(err.reason || err.message)
@@ -245,13 +350,14 @@ export function useContract() {
     } finally {
       setLoading(false)
     }
-  }, [contract])
+  }, [contract, signer, readProvider])
 
   return {
     contract,
     readContract,
     loading,
     error,
+    notDeployed,
     // reads
     getTotalItems,
     getAllItemIds,

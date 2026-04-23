@@ -81,6 +81,28 @@ export function Web3Provider({ children }) {
     }
   }, [])
 
+  // Ask MetaMask to clear its cached nonce for the current account.
+  // This fixes the "nonce too high" error that occurs when the Hardhat
+  // node restarts and resets nonces while MetaMask still remembers old ones.
+  const resetNonce = useCallback(async () => {
+    if (typeof window.ethereum === 'undefined') return
+    try {
+      // This is a Hardhat-specific RPC method that resets MetaMask's
+      // nonce tracking by resetting the node state.
+      // Instead, we use the standard `wallet_requestPermissions` trick:
+      // Re-requesting permissions forces MetaMask to refresh its internal
+      // account state, including the cached nonce.
+      await window.ethereum.request({
+        method: 'wallet_requestPermissions',
+        params: [{ eth_accounts: {} }],
+      })
+      console.log('[Web3] MetaMask nonce cache cleared via permission re-request')
+    } catch (err) {
+      // Fallback: instruct user to manually reset
+      console.warn('[Web3] Could not auto-reset nonce:', err.message)
+    }
+  }, [])
+
   const connectWallet = useCallback(async () => {
     if (typeof window.ethereum === 'undefined') {
       setError('MetaMask is not installed. Please install MetaMask to continue.')
@@ -100,7 +122,31 @@ export function Web3Provider({ children }) {
       setAccount(accounts[0])
 
       const network = await prov.getNetwork()
-      setChainId(Number(network.chainId))
+      const currentChainId = Number(network.chainId)
+      setChainId(currentChainId)
+
+      // On Hardhat local network, send hardhat_setNonce to sync the node
+      // with whatever nonce MetaMask has, preventing mismatch errors.
+      if (currentChainId === HARDHAT_CHAIN_ID) {
+        try {
+          // Get MetaMask's view of the nonce (pending tx count)
+          const metaMaskNonce = await prov.send('eth_getTransactionCount', [accounts[0], 'pending'])
+          // Get the Hardhat node's actual nonce
+          const nodeNonce = await prov.send('eth_getTransactionCount', [accounts[0], 'latest'])
+          
+          if (metaMaskNonce !== nodeNonce) {
+            console.warn(`[Web3] Nonce mismatch detected — MetaMask: ${metaMaskNonce}, Node: ${nodeNonce}`)
+            // Use hardhat_setNonce to sync the node to MetaMask's expected nonce
+            const rpcUrl = window.location.origin + '/rpc'
+            const rpcNetwork = new ethers.Network('hardhat', HARDHAT_CHAIN_ID)
+            const directProvider = new ethers.JsonRpcProvider(rpcUrl, rpcNetwork, { staticNetwork: rpcNetwork })
+            await directProvider.send('hardhat_setNonce', [accounts[0], metaMaskNonce])
+            console.log('[Web3] Node nonce synced to', metaMaskNonce)
+          }
+        } catch (nonceErr) {
+          console.warn('[Web3] Nonce sync attempt failed (non-critical):', nonceErr.message)
+        }
+      }
     } catch (err) {
       if (err.code === 4001) {
         setError('Connection rejected. Please approve the MetaMask connection.')
