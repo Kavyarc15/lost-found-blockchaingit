@@ -70,50 +70,135 @@ async function discoverContractAddress(readProvider) {
 }
 
 /**
- * Helper: detects nonce-related errors from Hardhat (-32000 "nonce too high")
- * and resets the Hardhat node nonce to match the expected value,
- * then retries the transaction once.
+ * Creates a direct JSON-RPC provider to the Hardhat node (bypasses wallet).
+ * Used for sending Hardhat-specific admin commands like hardhat_setNonce.
  */
-async function sendWithNonceRetry(contractMethod, args, signerInstance, readProvider) {
+function getDirectProvider() {
+  const rpcUrl = window.location.origin + '/rpc'
+  const rpcNetwork = new ethers.Network('hardhat', HARDHAT_CHAIN_ID)
+  return new ethers.JsonRpcProvider(rpcUrl, rpcNetwork, {
+    staticNetwork: rpcNetwork,
+    batchMaxCount: 1,
+  })
+}
+
+/**
+ * Pre-sync: Asks the wallet for its pending nonce, then tells the Hardhat
+ * node to adopt that nonce value so the next transaction won't be rejected.
+ * This fixes "nonce too high" errors that happen when the Hardhat node
+ * restarts but the wallet (Brave / MetaMask) remembers old nonces.
+ */
+async function presyncNonce(signerInstance) {
   try {
+    const addr = await signerInstance.getAddress()
+    const directProvider = getDirectProvider()
+
+    // What the node thinks the nonce should be
+    const nodeNonceHex = await directProvider.send('eth_getTransactionCount', [addr, 'latest'])
+    const nodeNonce = parseInt(nodeNonceHex, 16)
+
+    // What the wallet will send as nonce (asks through the wallet provider)
+    // BrowserProvider.send goes through the wallet's RPC, so this reflects
+    // what the wallet believes the nonce to be.
+    let walletNonce
+    try {
+      walletNonce = await signerInstance.getNonce()
+    } catch {
+      walletNonce = nodeNonce
+    }
+
+    if (walletNonce !== nodeNonce) {
+      console.warn(`[Nonce] Mismatch — Wallet: ${walletNonce}, Node: ${nodeNonce}. Syncing node...`)
+      const nonceHex = '0x' + walletNonce.toString(16)
+      await directProvider.send('hardhat_setNonce', [addr, nonceHex])
+      console.log(`[Nonce] Node nonce set to ${walletNonce} ✓`)
+    }
+  } catch (err) {
+    console.warn('[Nonce] Pre-sync failed (non-critical):', err.message)
+  }
+}
+
+/**
+ * Parses a nonce error message to extract the "got N" value,
+ * which is the nonce the wallet actually sent.
+ * Example: "Expected nonce to be 1 but got 8"
+ */
+function parseNonceFromError(err) {
+  const msg = (err.message || '') + ' ' + (err.info?.error?.message || '') + ' ' + (err.error?.message || '') + ' ' + (err.data?.message || '')
+  // Match patterns like "but got 8" or "got 8"
+  const gotMatch = msg.match(/got (\d+)/)
+  if (gotMatch) return parseInt(gotMatch[1], 10)
+  // Match "nonce too high" style with number context
+  const expectedMatch = msg.match(/expected (?:nonce )?(?:to be )?(\d+)/i)
+  if (expectedMatch) return null // We know expected but not what wallet sent
+  return null
+}
+
+/**
+ * Sends a transaction with automatic nonce recovery.
+ * 1. Pre-syncs the Hardhat node nonce to the wallet's nonce
+ * 2. Attempts the transaction
+ * 3. On nonce error: parses the exact "got" nonce, sets it on the node, retries
+ */
+async function sendWithNonceRetry(contractMethod, args, signerInstance) {
+  // Step 1: Pre-sync nonce before even trying
+  await presyncNonce(signerInstance)
+
+  try {
+    // Step 2: Attempt the transaction
     const tx = await contractMethod(...args)
     return tx
   } catch (err) {
-    const msg = (err.message || '') + (err.info?.error?.message || '') + (err.error?.message || '')
-    const isNonceError = msg.includes('nonce too high') || msg.includes('nonce too low') ||
-      (err.code === -32000 && msg.toLowerCase().includes('nonce'))
+    const msg = (err.message || '') + ' ' + (err.info?.error?.message || '') + ' ' + (err.error?.message || '') + ' ' + (err.data?.message || '')
+    const isNonceError = msg.toLowerCase().includes('nonce too high') ||
+      msg.toLowerCase().includes('nonce too low') ||
+      (String(err.code) === '-32000' && msg.toLowerCase().includes('nonce'))
 
     if (!isNonceError) throw err
 
-    console.warn('[Contract] Nonce mismatch detected, attempting auto-fix...')
+    console.warn('[Contract] Nonce error caught, attempting fix via error parsing...')
+
+    // Step 3: Parse the wallet nonce from the error and force-set it
     try {
-      const signerAddr = await signerInstance.getAddress()
-      // Reset the Hardhat node's nonce for this account to 0, then let the
-      // node auto-increment. We use hardhat_dropTransaction isn't available,
-      // so we use hardhat_setNonce to the node's latest count.
-      const rpcUrl = window.location.origin + '/rpc'
-      const rpcNetwork = new ethers.Network('hardhat', HARDHAT_CHAIN_ID)
-      const directProvider = new ethers.JsonRpcProvider(rpcUrl, rpcNetwork, { staticNetwork: rpcNetwork })
-      
-      // Get the actual on-chain nonce
-      const onChainNonce = await directProvider.send('eth_getTransactionCount', [signerAddr, 'latest'])
-      console.log('[Contract] On-chain nonce:', onChainNonce, '— resetting MetaMask nonce cache')
+      const addr = await signerInstance.getAddress()
+      const directProvider = getDirectProvider()
+      const walletNonce = parseNonceFromError(err)
 
-      // Tell MetaMask to re-derive the nonce by dropping and re-adding the network
-      // But simpler: just set Hardhat node nonce to what MetaMask expects
-      // Since we can't control MetaMask, we set the node nonce to a high value
-      // and let it work from there
-      const expectedNonce = await signerInstance.getNonce('pending')
-      const nonceHex = '0x' + expectedNonce.toString(16)
-      await directProvider.send('hardhat_setNonce', [signerAddr, nonceHex])
-      console.log('[Contract] Node nonce reset to', expectedNonce, '— retrying transaction...')
+      if (walletNonce !== null) {
+        // The error told us what nonce the wallet sent (e.g. "got 8")
+        // Set the Hardhat node nonce to that value so it accepts it
+        const nonceHex = '0x' + walletNonce.toString(16)
+        await directProvider.send('hardhat_setNonce', [addr, nonceHex])
+        console.log(`[Contract] Node nonce force-set to ${walletNonce} — retrying...`)
+      } else {
+        // Fallback: set a high nonce and hope it matches
+        const highNonce = '0x' + (100).toString(16)
+        await directProvider.send('hardhat_setNonce', [addr, highNonce])
+        console.log('[Contract] Node nonce set to fallback 100 — retrying...')
+      }
 
-      // Retry the transaction
+      // Step 4: Retry the transaction
       const tx = await contractMethod(...args)
       return tx
     } catch (retryErr) {
-      console.error('[Contract] Retry after nonce reset also failed:', retryErr)
-      throw err // Throw the original error
+      const retryMsg = (retryErr.message || '') + ' ' + (retryErr.info?.error?.message || '') + ' ' + (retryErr.error?.message || '')
+      // If retry also has a nonce error, try one more time with the parsed nonce
+      if (retryMsg.toLowerCase().includes('nonce')) {
+        const walletNonce2 = parseNonceFromError(retryErr)
+        if (walletNonce2 !== null) {
+          try {
+            const addr = await signerInstance.getAddress()
+            const directProvider = getDirectProvider()
+            const nonceHex2 = '0x' + walletNonce2.toString(16)
+            await directProvider.send('hardhat_setNonce', [addr, nonceHex2])
+            console.log(`[Contract] Second fix: node nonce set to ${walletNonce2}`)
+            const tx = await contractMethod(...args)
+            return tx
+          } catch { /* fall through */ }
+        }
+      }
+      console.error('[Contract] Retry after nonce fix failed:', retryErr)
+      throw err // Throw the original error for the UI to display
     }
   }
 }
@@ -254,8 +339,7 @@ export function useContract() {
       const tx = await sendWithNonceRetry(
         contract.reportItem.bind(contract),
         [name, description, location, imageHash],
-        signer,
-        readProvider
+        signer
       )
       const receipt = await tx.wait()
 
@@ -290,7 +374,7 @@ export function useContract() {
     } finally {
       setLoading(false)
     }
-  }, [contract, readContract, signer, readProvider])
+  }, [contract, readContract, signer])
 
   const fileClaim = useCallback(async (itemId) => {
     if (!contract) throw new Error('Contract not loaded')
@@ -300,8 +384,7 @@ export function useContract() {
       const tx = await sendWithNonceRetry(
         contract.fileClaim.bind(contract),
         [itemId],
-        signer,
-        readProvider
+        signer
       )
       await tx.wait()
     } catch (err) {
@@ -310,7 +393,7 @@ export function useContract() {
     } finally {
       setLoading(false)
     }
-  }, [contract, signer, readProvider])
+  }, [contract, signer])
 
   const confirmReturn = useCallback(async (itemId, confirmImageHash) => {
     if (!contract) throw new Error('Contract not loaded')
@@ -320,8 +403,7 @@ export function useContract() {
       const tx = await sendWithNonceRetry(
         contract.confirmReturn.bind(contract),
         [itemId, confirmImageHash],
-        signer,
-        readProvider
+        signer
       )
       await tx.wait()
     } catch (err) {
@@ -330,7 +412,7 @@ export function useContract() {
     } finally {
       setLoading(false)
     }
-  }, [contract, signer, readProvider])
+  }, [contract, signer])
 
   const disputeItem = useCallback(async (itemId) => {
     if (!contract) throw new Error('Contract not loaded')
@@ -340,8 +422,7 @@ export function useContract() {
       const tx = await sendWithNonceRetry(
         contract.disputeItem.bind(contract),
         [itemId],
-        signer,
-        readProvider
+        signer
       )
       await tx.wait()
     } catch (err) {
@@ -350,7 +431,7 @@ export function useContract() {
     } finally {
       setLoading(false)
     }
-  }, [contract, signer, readProvider])
+  }, [contract, signer])
 
   return {
     contract,
