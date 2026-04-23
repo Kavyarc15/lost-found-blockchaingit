@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react'
 import { ethers } from 'ethers'
+import { HARDHAT_CHAIN_ID } from '../utils/constants'
 
 const Web3Context = createContext(null)
 
@@ -18,12 +19,22 @@ export function Web3Provider({ children }) {
   const [error, setError] = useState(null)
 
   // Direct JSON-RPC provider for READ operations.
-  // Uses the Vite proxy (/rpc → localhost:8545) so it works in both
-  // local development AND GitHub Codespaces (where the browser can't
-  // reach localhost:8545 directly, but the Vite server can).
+  // Uses the Vite proxy (/rpc → localhost:8545).
+  // staticNetwork skips async network detection which can fail in Codespaces.
   const readProvider = useMemo(() => {
-    const rpcUrl = window.location.origin + '/rpc'
-    return new ethers.JsonRpcProvider(rpcUrl)
+    try {
+      const rpcUrl = window.location.origin + '/rpc'
+      const network = new ethers.Network('hardhat', HARDHAT_CHAIN_ID)
+      const prov = new ethers.JsonRpcProvider(rpcUrl, network, {
+        staticNetwork: network,
+        batchMaxCount: 1,  // disable batching for better proxy compatibility
+      })
+      console.log('[Web3] Read provider created:', rpcUrl)
+      return prov
+    } catch (err) {
+      console.error('[Web3] Failed to create read provider:', err)
+      return null
+    }
   }, [])
 
   // Automatically detect if already connected
@@ -109,7 +120,7 @@ export function Web3Provider({ children }) {
   const value = {
     account,
     provider,
-    readProvider,  // Direct RPC provider for reads (works in Codespaces)
+    readProvider,
     signer,
     chainId,
     connecting,

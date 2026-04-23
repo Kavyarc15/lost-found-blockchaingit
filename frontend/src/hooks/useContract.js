@@ -87,8 +87,22 @@ export function useContract() {
   }, [readContract])
 
   const getAllItems = useCallback(async () => {
-    if (!readContract) return []
+    if (!readContract) {
+      console.warn('[useContract] readContract not ready yet')
+      return []
+    }
+
+    // Test the RPC connection first
+    try {
+      const testResult = await readContract.getTotalItems()
+      console.log('[useContract] getTotalItems =', Number(testResult))
+    } catch (testErr) {
+      console.error('[useContract] RPC test failed:', testErr.message)
+      throw new Error('Cannot reach the blockchain. Is the Hardhat node running?')
+    }
+
     const ids = await readContract.getAllItemIds()
+    console.log('[useContract] getAllItemIds =', ids.length, 'items')
     const items = await Promise.all(
       ids.map(async (id) => {
         const item = await readContract.getItem(id)

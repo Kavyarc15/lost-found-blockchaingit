@@ -9,13 +9,16 @@ export default function Dashboard() {
   const { getAllItems, getTotalItems } = useContract()
   const [items, setItems] = useState([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState(null)
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState('all')
   const [stats, setStats] = useState({ total: 0, reported: 0, claimed: 0, returned: 0 })
 
   const loadItems = useCallback(async () => {
     try {
+      setLoadError(null)
       const allItems = await getAllItems()
+      console.log('[Dashboard] Loaded items:', allItems.length)
       setItems(allItems)
 
       const total = allItems.length
@@ -24,7 +27,8 @@ export default function Dashboard() {
       const returned = allItems.filter((i) => i.status === 2).length
       setStats({ total, reported, claimed, returned })
     } catch (err) {
-      console.error('Failed to load items:', err)
+      console.error('[Dashboard] Failed to load items:', err)
+      setLoadError(err.message || 'Failed to connect to the blockchain')
     } finally {
       setLoading(false)
     }
@@ -118,6 +122,20 @@ export default function Dashboard() {
         {/* Items Grid */}
         {loading ? (
           <LoadingSpinner text="Loading items from the blockchain..." />
+        ) : loadError ? (
+          <div className="empty-state">
+            <div className="empty-state-icon">⚠️</div>
+            <h3>Connection Error</h3>
+            <p style={{ color: 'var(--color-danger)', maxWidth: '500px', wordBreak: 'break-word' }}>
+              {loadError}
+            </p>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '8px' }}>
+              Make sure the Hardhat node is running and the contract is deployed.
+            </p>
+            <button className="btn btn-primary" onClick={() => { setLoading(true); loadItems(); }} style={{ marginTop: '16px' }}>
+              🔄 Retry Connection
+            </button>
+          </div>
         ) : filteredItems.length === 0 ? (
           <div className="empty-state">
             <div className="empty-state-icon">📭</div>
