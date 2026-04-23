@@ -135,34 +135,41 @@ export function useContract() {
       const tx = await contract.reportItem(name, description, location, imageHash)
       const receipt = await tx.wait()
 
-      // Try to parse the ItemReported event to get the new item ID
-      // Method 1: Check if receipt already has parsed logs (ethers v6 EventLog)
-      for (const log of receipt.logs) {
-        if (log.fragment?.name === 'ItemReported' || log.eventName === 'ItemReported') {
-          return Number(log.args?.itemId || log.args?.[0])
-        }
-      }
-
-      // Method 2: Manually parse logs that have topics
-      for (const log of receipt.logs) {
-        if (log.topics && log.topics.length > 0) {
-          try {
-            const parsed = contract.interface.parseLog({
-              topics: [...log.topics],
-              data: log.data,
-            })
-            if (parsed?.name === 'ItemReported') {
-              return Number(parsed.args.itemId)
-            }
-          } catch {
-            // Not our event, skip
+      // Transaction succeeded! Now try to extract the new item ID.
+      // This is best-effort — if parsing fails, we still return success.
+      try {
+        // Method 1: Check if receipt already has parsed logs (ethers v6 EventLog)
+        for (const log of (receipt.logs || [])) {
+          if (log.fragment?.name === 'ItemReported' || log.eventName === 'ItemReported') {
+            return Number(log.args?.itemId || log.args?.[0])
           }
         }
-      }
 
-      // Method 3: Fallback — get the latest item ID from the contract
-      const totalItems = await contract.getTotalItems()
-      return Number(totalItems)
+        // Method 2: Manually parse logs that have topics
+        for (const log of (receipt.logs || [])) {
+          if (log.topics && log.topics.length > 0) {
+            try {
+              const parsed = contract.interface.parseLog({
+                topics: [...log.topics],
+                data: log.data,
+              })
+              if (parsed?.name === 'ItemReported') {
+                return Number(parsed.args.itemId)
+              }
+            } catch {
+              // Not our event, skip
+            }
+          }
+        }
+
+        // Method 3: Fallback — get the latest item ID from the contract
+        const totalItems = await contract.getTotalItems()
+        return Number(totalItems)
+      } catch {
+        // Event parsing failed but transaction was successful
+        // Return null to indicate success without a specific ID
+        return null
+      }
     } catch (err) {
       setError(err.reason || err.message)
       throw err

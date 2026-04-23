@@ -55,11 +55,13 @@ export default function ReportItem() {
               Your found item has been recorded on the blockchain. All users on the network will be notified.
             </p>
             <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', flexWrap: 'wrap' }}>
-              <button className="btn btn-primary" onClick={() => navigate(`/item/${newItemId}`)}>
-                View Item #{newItemId}
-              </button>
+              {newItemId && (
+                <button className="btn btn-primary" onClick={() => navigate(`/item/${newItemId}`)}>
+                  View Item #{newItemId}
+                </button>
+              )}
               <button className="btn btn-ghost" onClick={() => navigate('/dashboard')}>
-                Back to Dashboard
+                {newItemId ? 'Back to Dashboard' : '📋 Go to Dashboard'}
               </button>
             </div>
           </div>
