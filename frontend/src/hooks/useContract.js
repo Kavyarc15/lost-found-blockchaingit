@@ -134,14 +134,35 @@ export function useContract() {
     try {
       const tx = await contract.reportItem(name, description, location, imageHash)
       const receipt = await tx.wait()
-      // parse event to get the new item ID
-      const event = receipt.logs.find((log) => {
-        try {
-          return contract.interface.parseLog(log)?.name === 'ItemReported'
-        } catch { return false }
-      })
-      const parsed = contract.interface.parseLog(event)
-      return Number(parsed.args.itemId)
+
+      // Try to parse the ItemReported event to get the new item ID
+      // Method 1: Check if receipt already has parsed logs (ethers v6 EventLog)
+      for (const log of receipt.logs) {
+        if (log.fragment?.name === 'ItemReported' || log.eventName === 'ItemReported') {
+          return Number(log.args?.itemId || log.args?.[0])
+        }
+      }
+
+      // Method 2: Manually parse logs that have topics
+      for (const log of receipt.logs) {
+        if (log.topics && log.topics.length > 0) {
+          try {
+            const parsed = contract.interface.parseLog({
+              topics: [...log.topics],
+              data: log.data,
+            })
+            if (parsed?.name === 'ItemReported') {
+              return Number(parsed.args.itemId)
+            }
+          } catch {
+            // Not our event, skip
+          }
+        }
+      }
+
+      // Method 3: Fallback — get the latest item ID from the contract
+      const totalItems = await contract.getTotalItems()
+      return Number(totalItems)
     } catch (err) {
       setError(err.reason || err.message)
       throw err
