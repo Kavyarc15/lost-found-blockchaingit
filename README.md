@@ -320,6 +320,28 @@ npm run dev -- --host
 - All 3 terminals (Hardhat node, deploy, frontend) can run simultaneously in Codespaces
 - The forwarded port URLs are publicly accessible — you can share them for demos!
 
+### ⚠️ After Codespace Restarts / Hardhat Node Restarts
+
+If your Codespace restarts (idle timeout, etc.) or you restart the Hardhat node, you **must** follow these steps:
+
+```bash
+# Terminal 1: Restart Hardhat node
+npx hardhat node
+
+# Terminal 2: Redeploy the contract
+npx hardhat run scripts/deploy.js --network localhost
+
+# Terminal 3: Restart the frontend
+cd frontend && npm run dev -- --host
+```
+
+Then in your browser wallet (Brave Wallet / MetaMask):
+1. Go to **Settings → Web3** (Brave) or **Settings → Advanced** (MetaMask)
+2. Click **"Clear wallet transaction and nonce information"** (Brave) or **"Clear activity tab data"** (MetaMask)
+3. Refresh the app page and reconnect your wallet
+
+> **Note:** The app has **automatic nonce recovery** built-in — if you get a nonce error, the app will auto-fix it and retry the transaction. But clearing wallet data after a node restart gives the cleanest experience.
+
 ---
 
 ## 🧪 Testing the Full Flow
@@ -377,6 +399,98 @@ To test the complete lifecycle, you need **two different wallet accounts**:
 
 ---
 
+## 🔧 Troubleshooting
+
+### "Nonce too high" Error (Most Common)
+
+**Symptom:** Transaction fails with:
+```
+-32000: Nonce too high. Expected nonce to be 1 but got 8.
+Note that transactions can't be queued when automining.
+```
+
+**Cause:** The Hardhat node restarted (resetting account nonces to 0), but your wallet (Brave / MetaMask) still remembers the old nonce from previous sessions.
+
+**Fix — Option A (Automatic):**
+The app has built-in nonce recovery. Just **click "Retry"** or **submit the transaction again** — it will:
+1. Detect the nonce mismatch from the error
+2. Call `hardhat_setNonce` on the Hardhat node to sync
+3. Retry the transaction automatically
+
+**Fix — Option B (Manual Clear):**
+
+| Wallet | Steps |
+|---|---|
+| **Brave Wallet** | Settings → Web3 → Click **"Clear wallet transaction and nonce information"** |
+| **MetaMask** | Settings → Advanced → Click **"Clear activity tab data"** |
+
+After clearing, **refresh the page** and try again.
+
+**Fix — Option C (Full Reset):**
+If A and B don't work, do a full reset:
+```bash
+# 1. Stop everything (Ctrl+C in all terminals)
+
+# 2. Restart Hardhat node
+npx hardhat node
+
+# 3. Redeploy the contract (new terminal)
+npx hardhat run scripts/deploy.js --network localhost
+
+# 4. Restart frontend (new terminal)
+cd frontend && npm run dev -- --host
+
+# 5. Clear wallet data (see table above)
+# 6. Refresh the app and reconnect wallet
+```
+
+---
+
+### "Contract not deployed" Error
+
+**Symptom:** Dashboard shows "Contract not deployed" message.
+
+**Fix:** The Hardhat node was restarted without redeploying the contract:
+```bash
+npx hardhat run scripts/deploy.js --network localhost
+```
+Then refresh the page.
+
+---
+
+### Wallet Shows 0 ETH on Hardhat Network
+
+**Fix:** Import a Hardhat test account private key:
+```
+Account #0: 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+Account #1: 0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
+```
+Make sure you're on the **Hardhat Local** network (Chain ID: 31337).
+
+---
+
+### Images Not Uploading
+
+**Fix:** Make sure you have Pinata API keys configured:
+```bash
+cd frontend
+cp .env.example .env
+# Edit .env with your Pinata keys
+```
+Without Pinata keys, images are stored in browser localStorage (temporary).
+
+---
+
+### Codespaces: "Cannot connect to wallet" or RPC errors
+
+**Fix:**
+1. Go to the **PORTS** tab in Codespaces
+2. Right-click port **8545** → Set visibility to **Public**
+3. Use that public URL as the RPC URL in your wallet
+4. Make sure the Hardhat node is running in a terminal
+
+---
+
 ## 🛡️ Security
 
 - **Admin-only functions**: `disputeItem` and `resolveDispute` restricted to deployer
@@ -384,6 +498,7 @@ To test the complete lifecycle, you need **two different wallet accounts**:
 - **Input validation**: Name, location, and image hash are required
 - **Status enforcement**: Items must follow the correct lifecycle sequence
 - **No real funds**: Uses local Hardhat network with test ETH
+- **Auto nonce recovery**: Built-in handling for nonce mismatches after node restarts
 
 ---
 
