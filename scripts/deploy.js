@@ -11,22 +11,28 @@ async function main() {
   await contract.waitForDeployment();
 
   const contractAddress = await contract.getAddress();
-  console.log("Deployed to:", contractAddress);
+  console.log("LostAndFound deployed to:", contractAddress);
 
+  // Export ABI + address for the frontend
   const abiDir = path.join(__dirname, "../frontend/src/contracts");
   if (!fs.existsSync(abiDir)) fs.mkdirSync(abiDir, { recursive: true });
 
   const artifact = await ethers.getContractFactory("LostAndFound");
+  const exportData = {
+    address: contractAddress,
+    abi: JSON.parse(artifact.interface.formatJson()),
+  };
+
   fs.writeFileSync(
     path.join(abiDir, "LostAndFound.json"),
-    JSON.stringify({
-      address: contractAddress,
-      abi: JSON.parse(artifact.interface.formatJson())
-    }, null, 2)
+    JSON.stringify(exportData, null, 2)
   );
-  console.log("ABI saved to frontend/src/contracts/LostAndFound.json");
+  console.log("ABI + address saved to frontend/src/contracts/LostAndFound.json");
 }
 
 main()
   .then(() => process.exit(0))
-  .catch(err => { console.error(err); process.exit(1); });
+  .catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });

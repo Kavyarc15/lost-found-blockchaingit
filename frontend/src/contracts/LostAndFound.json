@@ -1,0 +1,462 @@
+{
+  "address": "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512",
+  "abi": [
+    {
+      "type": "constructor",
+      "stateMutability": "undefined",
+      "payable": false,
+      "inputs": []
+    },
+    {
+      "type": "event",
+      "anonymous": false,
+      "name": "ClaimFiled",
+      "inputs": [
+        {
+          "type": "uint256",
+          "name": "itemId",
+          "indexed": true
+        },
+        {
+          "type": "address",
+          "name": "owner",
+          "indexed": true
+        },
+        {
+          "type": "uint256",
+          "name": "timestamp",
+          "indexed": false
+        }
+      ]
+    },
+    {
+      "type": "event",
+      "anonymous": false,
+      "name": "DisputeResolved",
+      "inputs": [
+        {
+          "type": "uint256",
+          "name": "itemId",
+          "indexed": true
+        },
+        {
+          "type": "uint8",
+          "name": "newStatus",
+          "indexed": false
+        },
+        {
+          "type": "address",
+          "name": "admin",
+          "indexed": true
+        },
+        {
+          "type": "uint256",
+          "name": "timestamp",
+          "indexed": false
+        }
+      ]
+    },
+    {
+      "type": "event",
+      "anonymous": false,
+      "name": "ItemDisputed",
+      "inputs": [
+        {
+          "type": "uint256",
+          "name": "itemId",
+          "indexed": true
+        },
+        {
+          "type": "address",
+          "name": "admin",
+          "indexed": true
+        },
+        {
+          "type": "uint256",
+          "name": "timestamp",
+          "indexed": false
+        }
+      ]
+    },
+    {
+      "type": "event",
+      "anonymous": false,
+      "name": "ItemReported",
+      "inputs": [
+        {
+          "type": "uint256",
+          "name": "itemId",
+          "indexed": true
+        },
+        {
+          "type": "address",
+          "name": "finder",
+          "indexed": true
+        },
+        {
+          "type": "string",
+          "name": "name",
+          "indexed": false
+        },
+        {
+          "type": "string",
+          "name": "imageHash",
+          "indexed": false
+        },
+        {
+          "type": "uint256",
+          "name": "timestamp",
+          "indexed": false
+        }
+      ]
+    },
+    {
+      "type": "event",
+      "anonymous": false,
+      "name": "ItemReturned",
+      "inputs": [
+        {
+          "type": "uint256",
+          "name": "itemId",
+          "indexed": true
+        },
+        {
+          "type": "address",
+          "name": "owner",
+          "indexed": true
+        },
+        {
+          "type": "string",
+          "name": "confirmImageHash",
+          "indexed": false
+        },
+        {
+          "type": "uint256",
+          "name": "timestamp",
+          "indexed": false
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "admin",
+      "constant": true,
+      "stateMutability": "view",
+      "payable": false,
+      "inputs": [],
+      "outputs": [
+        {
+          "type": "address",
+          "name": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "confirmReturn",
+      "constant": false,
+      "payable": false,
+      "inputs": [
+        {
+          "type": "uint256",
+          "name": "itemId"
+        },
+        {
+          "type": "string",
+          "name": "confirmImageHash"
+        }
+      ],
+      "outputs": []
+    },
+    {
+      "type": "function",
+      "name": "disputeItem",
+      "constant": false,
+      "payable": false,
+      "inputs": [
+        {
+          "type": "uint256",
+          "name": "itemId"
+        }
+      ],
+      "outputs": []
+    },
+    {
+      "type": "function",
+      "name": "fileClaim",
+      "constant": false,
+      "payable": false,
+      "inputs": [
+        {
+          "type": "uint256",
+          "name": "itemId"
+        }
+      ],
+      "outputs": []
+    },
+    {
+      "type": "function",
+      "name": "getAllItemIds",
+      "constant": true,
+      "stateMutability": "view",
+      "payable": false,
+      "inputs": [],
+      "outputs": [
+        {
+          "type": "uint256[]",
+          "name": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "getItem",
+      "constant": true,
+      "stateMutability": "view",
+      "payable": false,
+      "inputs": [
+        {
+          "type": "uint256",
+          "name": "itemId"
+        }
+      ],
+      "outputs": [
+        {
+          "type": "tuple",
+          "name": "",
+          "components": [
+            {
+              "type": "uint256",
+              "name": "id"
+            },
+            {
+              "type": "string",
+              "name": "name"
+            },
+            {
+              "type": "string",
+              "name": "description"
+            },
+            {
+              "type": "string",
+              "name": "location"
+            },
+            {
+              "type": "string",
+              "name": "imageHash"
+            },
+            {
+              "type": "string",
+              "name": "confirmImageHash"
+            },
+            {
+              "type": "address",
+              "name": "finder"
+            },
+            {
+              "type": "address",
+              "name": "owner"
+            },
+            {
+              "type": "uint8",
+              "name": "status"
+            },
+            {
+              "type": "uint256",
+              "name": "reportedAt"
+            },
+            {
+              "type": "uint256",
+              "name": "claimedAt"
+            },
+            {
+              "type": "uint256",
+              "name": "returnedAt"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "getItemsByFinder",
+      "constant": true,
+      "stateMutability": "view",
+      "payable": false,
+      "inputs": [
+        {
+          "type": "address",
+          "name": "finder"
+        }
+      ],
+      "outputs": [
+        {
+          "type": "uint256[]",
+          "name": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "getItemsByOwner",
+      "constant": true,
+      "stateMutability": "view",
+      "payable": false,
+      "inputs": [
+        {
+          "type": "address",
+          "name": "owner"
+        }
+      ],
+      "outputs": [
+        {
+          "type": "uint256[]",
+          "name": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "getTotalItems",
+      "constant": true,
+      "stateMutability": "view",
+      "payable": false,
+      "inputs": [],
+      "outputs": [
+        {
+          "type": "uint256",
+          "name": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "itemIds",
+      "constant": true,
+      "stateMutability": "view",
+      "payable": false,
+      "inputs": [
+        {
+          "type": "uint256",
+          "name": ""
+        }
+      ],
+      "outputs": [
+        {
+          "type": "uint256",
+          "name": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "items",
+      "constant": true,
+      "stateMutability": "view",
+      "payable": false,
+      "inputs": [
+        {
+          "type": "uint256",
+          "name": ""
+        }
+      ],
+      "outputs": [
+        {
+          "type": "uint256",
+          "name": "id"
+        },
+        {
+          "type": "string",
+          "name": "name"
+        },
+        {
+          "type": "string",
+          "name": "description"
+        },
+        {
+          "type": "string",
+          "name": "location"
+        },
+        {
+          "type": "string",
+          "name": "imageHash"
+        },
+        {
+          "type": "string",
+          "name": "confirmImageHash"
+        },
+        {
+          "type": "address",
+          "name": "finder"
+        },
+        {
+          "type": "address",
+          "name": "owner"
+        },
+        {
+          "type": "uint8",
+          "name": "status"
+        },
+        {
+          "type": "uint256",
+          "name": "reportedAt"
+        },
+        {
+          "type": "uint256",
+          "name": "claimedAt"
+        },
+        {
+          "type": "uint256",
+          "name": "returnedAt"
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "reportItem",
+      "constant": false,
+      "payable": false,
+      "inputs": [
+        {
+          "type": "string",
+          "name": "name"
+        },
+        {
+          "type": "string",
+          "name": "description"
+        },
+        {
+          "type": "string",
+          "name": "location"
+        },
+        {
+          "type": "string",
+          "name": "imageHash"
+        }
+      ],
+      "outputs": [
+        {
+          "type": "uint256",
+          "name": ""
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "resolveDispute",
+      "constant": false,
+      "payable": false,
+      "inputs": [
+        {
+          "type": "uint256",
+          "name": "itemId"
+        },
+        {
+          "type": "uint8",
+          "name": "newStatus"
+        }
+      ],
+      "outputs": []
+    }
+  ]
+}
